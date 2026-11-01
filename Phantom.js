@@ -4,9 +4,9 @@ var K='ph_gemini_key';
 var k=localStorage.getItem(K);
 if(!k){k=prompt('Gemini API key:');if(!k)return;localStorage.setItem(K,k);}
 var SKEY='phantom_v1';
-var DEF={model:'gemini-2.5-flash',speed:'normal',autoAdvance:true};
+var DEF={model:'gemini-3.1-flash-lite',speed:'normal',autoAdvance:true};
 var cfg=Object.assign({},DEF,JSON.parse(localStorage.getItem(SKEY)||'{}'));
-var MODELS=['gemini-2.0-flash-lite','gemini-2.0-flash','gemini-2.5-flash-lite','gemini-2.5-flash','gemini-2.5-pro'];
+var MODELS=['gemini-3.1-flash-lite','gemini-3-flash-preview','gemini-2.5-flash','gemini-1.5-flash'];
 var SPEEDS={slow:{ss:[35,45],cd:[1400,2200],ms:2500},normal:{ss:[22,30],cd:[900,1600],ms:1800},fast:{ss:[10,16],cd:[350,750],ms:1000}};
 function sp(){return SPEEDS[cfg.speed]||SPEEDS.normal;}
 function rnd(a,b){return Math.floor(Math.random()*(b-a+1))+a;}
