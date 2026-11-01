@@ -1,7 +1,7 @@
 (function(){
 'use strict';
 
-// ── Key / Config ─────────────────────────────────────────────────────────────
+// ── Key / Config ──────────────────────────────────────────────────────────────
 var K='ph_gemini_key';
 var k=localStorage.getItem(K);
 if(!k){k=prompt('Gemini API key:');if(!k)return;localStorage.setItem(K,k);}
@@ -25,17 +25,25 @@ var lastQ='',busy=false,busyAt=0,running=true,postRead=false,
     storedPassage='',storedMathsContext='',
     sparxMode=null,
     lastMathsQ='',mathsBusy=false,mathsBusyAt=0,
+    pendingMathsAnswer=null,currentPageKey='',
     logs=[],stats={ans:0,correct:0,streak:0};
 var panel,stopBtn;
 
 // ── Watchdog ──────────────────────────────────────────────────────────────────
 function watchdog(){
   if(busy&&Date.now()-busyAt>15000){busy=false;lastQ='';stat('watchdog reset');}
-  if(mathsBusy&&Date.now()-mathsBusyAt>15000){mathsBusy=false;lastMathsQ='';addLog('maths watchdog','warn');}
+  if(mathsBusy&&Date.now()-mathsBusyAt>20000){
+    mathsBusy=false;lastMathsQ='';pendingMathsAnswer=null;
+    addLog('maths watchdog','warn');
+  }
 }
 function setBusy(v){busy=v;if(v)busyAt=Date.now();}
 function setMathsBusy(v){mathsBusy=v;if(v)mathsBusyAt=Date.now();}
-function isInPanel(el){var p=el;while(p){if(panel&&p===panel)return true;if(stopBtn&&p===stopBtn)return true;p=p.parentElement;}return false;}
+function isInPanel(el){
+  var p=el;
+  while(p){if(panel&&p===panel)return true;if(stopBtn&&p===stopBtn)return true;p=p.parentElement;}
+  return false;
+}
 
 // ── Logging ───────────────────────────────────────────────────────────────────
 function addLog(msg,type){
@@ -114,12 +122,7 @@ function detectMode(){
 // ── Gemini API ────────────────────────────────────────────────────────────────
 function tryModel(idx,prompt,cb){
   if(idx>=MODELS.length){cb('all models failed',null);return;}
-  var model=cfg.model;
-  // on retry, walk the list
-  if(idx>0){
-    var list=MODELS.filter(function(m){return m!==cfg.model;});
-    model=list[idx-1]||MODELS[idx];
-  }
+  var model=idx===0?cfg.model:MODELS[idx];
   setPulse('thinking');
   fetch('https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+k,{
     method:'POST',
@@ -182,7 +185,6 @@ function getPassageText(){
   }
   return null;
 }
-
 function getMCQ(){
   var divs=document.querySelectorAll('div,section,ul');
   var best=null,bestCount=0;
@@ -202,7 +204,6 @@ function getMCQ(){
   });
   return{container:best,buttons:btns,options:btns.map(function(b){return b.textContent.trim();})};
 }
-
 function getQuestionText(){
   var sel=['[class*="question"]','[class*="prompt"]','h2','h3'];
   for(var i=0;i<sel.length;i++){
@@ -223,7 +224,6 @@ function readerLoop(){
   if(!running||busy)return;
   watchdog();
   if(hasDialog()){clickKw(['close','dismiss','cancel','got it','ok']);return;}
-
   if(postRead){
     var mcq=getMCQ();
     var qText=getQuestionText();
@@ -259,7 +259,6 @@ function readerLoop(){
     });
     return;
   }
-
   var readBtn=null;
   var els=document.querySelectorAll('button,a,[role="button"]');
   for(var i=0;i<els.length;i++){
@@ -271,25 +270,20 @@ function readerLoop(){
     storedPassage=getPassageText()||'';
     var psgEl=document.getElementById('ph-psg');if(psgEl)psgEl.textContent=storedPassage.slice(0,60)+'...';
     readBtn.click();lastReadClick=Date.now();stat('reading...');addLog('read btn clicked','ok');
-    var ssp=sp();
-    var charCount=storedPassage.length||600;
-    var readTime=Math.min(Math.max(charCount*ssp.ss[0],4000),45000);
+    var readTime=Math.min(Math.max((storedPassage.length||600)*sp().ss[0],4000),45000);
     setTimeout(function(){postRead=true;stat('answering...');addLog('read done','ok');},readTime);
     return;
   }
-
   var mcq2=getMCQ();
-  if(mcq2&&!readBtn){
-    if(!storedPassage)storedPassage=getPassageText()||'';
-    postRead=true;
-  }
+  if(mcq2&&!readBtn){if(!storedPassage)storedPassage=getPassageText()||'';postRead=true;}
 }
 
 // ── Maths helpers ─────────────────────────────────────────────────────────────
 function getMathsInput(){
   var inputs=Array.from(document.querySelectorAll('input[type="number"],input[type="text"],input:not([type])'));
   return inputs.find(function(i){
-    return i.offsetParent!==null&&!isCookie(i)&&!isInPanel(i)&&!i.readOnly&&i.style.display!=='none'&&getComputedStyle(i).display!=='none';
+    return i.offsetParent!==null&&!isCookie(i)&&!isInPanel(i)&&!i.readOnly&&
+           i.style.display!=='none'&&getComputedStyle(i).display!=='none';
   });
 }
 
@@ -303,19 +297,20 @@ function getMathsMCQ(){
     if(c.offsetParent===null||isInPanel(c))continue;
     var btns=Array.from(c.querySelectorAll('button,[role="button"],[class*="option"],[class*="choice"]')).filter(function(b){
       var t=(b.textContent||'').trim().toLowerCase();
-      return b.offsetParent!==null&&!isCookie(b)&&!isInPanel(b)&&t.length>0&&t.length<100&&!NAV_KW.some(function(kw){return t===kw;});
+      return b.offsetParent!==null&&!isCookie(b)&&!isInPanel(b)&&
+             t.length>0&&t.length<100&&!NAV_KW.some(function(kw){return t===kw;});
     });
     if(btns.length>=2&&btns.length<=6&&btns.length>bestCount){best=c;bestCount=btns.length;}
   }
   if(!best||bestCount<2)return null;
   var btns=Array.from(best.querySelectorAll('button,[role="button"],[class*="option"],[class*="choice"]')).filter(function(b){
     var t=(b.textContent||'').trim().toLowerCase();
-    return b.offsetParent!==null&&!isCookie(b)&&!isInPanel(b)&&t.length>0&&t.length<100&&!NAV_KW.some(function(kw){return t===kw;});
+    return b.offsetParent!==null&&!isCookie(b)&&!isInPanel(b)&&
+           t.length>0&&t.length<100&&!NAV_KW.some(function(kw){return t===kw;});
   });
   return{container:best,buttons:btns,options:btns.map(function(b){return b.textContent.trim();})};
 }
 
-// Captures everything visible on the current page — used before clicking Answer
 function captureFullMathsContext(){
   var chunks=[],seen=new Set();
   document.querySelectorAll('p,span,div,h1,h2,h3,h4,li').forEach(function(el){
@@ -325,7 +320,6 @@ function captureFullMathsContext(){
     var key=t.slice(0,60);
     if(!seen.has(key)){seen.add(key);chunks.push(t);}
   });
-  // KaTeX math expressions
   document.querySelectorAll('.katex,.katex-display').forEach(function(kk){
     if(!kk.offsetParent||isInPanel(kk))return;
     var ann=kk.querySelector('annotation[encoding="application/x-tex"]');
@@ -360,10 +354,17 @@ function getMathsQuestion(){
   return null;
 }
 
+// Returns true only if Submit/Check button exists AND is not disabled
 function getCheckBtn(){
   var els=document.querySelectorAll('button,a,[role="button"]');
   for(var i=0;i<els.length;i++){
     if(!els[i].offsetParent||isInPanel(els[i]))continue;
+    if(els[i].disabled)continue;
+    // check for disabled via attribute or common class names
+    var attr=els[i].getAttribute('disabled');
+    if(attr!==null&&attr!=='false')continue;
+    var cls=(els[i].className||'').toLowerCase();
+    if(cls.includes('disabled')||cls.includes('inactive')||cls.includes('grey'))continue;
     var t=(els[i].textContent||'').toLowerCase().trim();
     if(t.includes('check')||t.includes('submit')||t==='enter')return els[i];
   }
@@ -389,42 +390,6 @@ function getNextMathsBtn(){
   return null;
 }
 
-function setInputNative(inp,val){
-  try{
-    inp.focus();
-    var setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;
-    // clear first
-    setter.call(inp,'');
-    inp.dispatchEvent(new Event('input',{bubbles:true}));
-    // set value
-    setter.call(inp,String(val));
-    inp.dispatchEvent(new Event('input',{bubbles:true}));
-    inp.dispatchEvent(new Event('change',{bubbles:true}));
-    // per-character keyboard events for React controlled inputs
-    String(val).split('').forEach(function(ch){
-      inp.dispatchEvent(new KeyboardEvent('keydown',{key:ch,code:'Key'+ch.toUpperCase(),bubbles:true}));
-      inp.dispatchEvent(new KeyboardEvent('keypress',{key:ch,bubbles:true}));
-      inp.dispatchEvent(new KeyboardEvent('keyup',{key:ch,code:'Key'+ch.toUpperCase(),bubbles:true}));
-    });
-    return true;
-  }catch(e){
-    try{inp.value=String(val);return true;}catch(e2){return false;}
-  }
-}
-
-function clickNumpad(val){
-  var numBtns=Array.from(document.querySelectorAll('button')).filter(function(b){
-    return b.offsetParent!==null&&!isInPanel(b)&&/^[\d.]$/.test((b.textContent||'').trim());
-  });
-  if(numBtns.length<3)return false;
-  var success=true;
-  String(val).split('').forEach(function(d){
-    var btn=numBtns.find(function(b){return b.textContent.trim()===d;});
-    if(btn)btn.click();else success=false;
-  });
-  return success;
-}
-
 function tryLocalSolve(q){
   if(!q)return null;
   var t=q.replace(/\s+/g,' ');
@@ -440,39 +405,110 @@ function tryLocalSolve(q){
   return null;
 }
 
-// Focus input → wait for numpad to render → click numpad digits → fallback to native setter → submit
+// Polls until numpad digit buttons appear (up to maxTries * 100ms)
+function waitForNumpad(cb,tries){
+  tries=tries||0;
+  var numBtns=Array.from(document.querySelectorAll('button')).filter(function(b){
+    return b.offsetParent!==null&&!isInPanel(b)&&/^[\d.]$/.test((b.textContent||'').trim());
+  });
+  if(numBtns.length>=3){cb(true,numBtns);return;}
+  if(tries>=12){cb(false,null);return;} // gave up after ~1.2s
+  setTimeout(function(){waitForNumpad(cb,tries+1);},100);
+}
+
+// Tries every fill method in order; only marks done when Submit is enabled
 function fillAndSubmit(val,delay){
   var ssp=sp();
   setTimeout(function(){
     var i2=getMathsInput();
-    if(!i2){setMathsBusy(false);lastMathsQ='';addLog('no input found','warn');return;}
-    // Step 1: focus so numpad renders
+    if(!i2){
+      addLog('no input — retrying','warn');
+      stat('maths: waiting for input');
+      setMathsBusy(false);
+      // don't clear lastMathsQ so we retry the fill, not re-call Gemini
+      return;
+    }
+
+    stat('maths: filling '+val+'...');
+
+    // Step 1: focus to trigger numpad render
     i2.focus();
     i2.click();
-    setTimeout(function(){
-      // Step 2: try numpad (now visible after focus)
-      var usedNumpad=clickNumpad(val);
-      addLog('numpad: '+(usedNumpad?'ok':'miss — using native'),'info');
-      if(!usedNumpad){
-        setInputNative(i2,val);
+
+    // Step 2: poll for numpad
+    waitForNumpad(function(found,numBtns){
+
+      // Method A: click numpad digits
+      var filled=false;
+      if(found){
+        var allFound=true;
+        String(val).split('').forEach(function(d){
+          var btn=numBtns.find(function(b){return b.textContent.trim()===d;});
+          if(btn)btn.click();
+          else allFound=false;
+        });
+        if(allFound){filled=true;addLog('numpad fill: '+val,'ok');}
+        else addLog('numpad partial — trying fallback','warn');
       }
-      // Step 3: submit
+
+      // Method B: InputEvent insertText — React responds to this
+      if(!filled){
+        try{
+          i2.focus();
+          var setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;
+          setter.call(i2,'');
+          i2.dispatchEvent(new Event('input',{bubbles:true}));
+          setter.call(i2,String(val));
+          i2.dispatchEvent(new InputEvent('input',{
+            bubbles:true,cancelable:true,
+            inputType:'insertText',data:String(val)
+          }));
+          i2.dispatchEvent(new Event('change',{bubbles:true}));
+          filled=true;
+          addLog('InputEvent fill: '+val,'ok');
+        }catch(e){addLog('InputEvent err: '+e,'err');}
+      }
+
+      // Method C: execCommand — last resort, works in Chrome
+      if(!filled){
+        try{
+          i2.focus();
+          document.execCommand('selectAll',false,null);
+          document.execCommand('insertText',false,String(val));
+          filled=true;
+          addLog('execCommand fill: '+val,'ok');
+        }catch(e){addLog('execCommand err','err');}
+      }
+
+      if(!filled){
+        addLog('all fill methods failed','err');
+        stat('maths: fill failed — retrying');
+        setMathsBusy(false);
+        // lastMathsQ stays set so we skip Gemini and retry fill on next loop
+        return;
+      }
+
+      // Step 3: wait then check if Submit is now enabled
       setTimeout(function(){
-        var chk=getCheckBtn();
-        if(!chk){
-          // scroll down in case Submit is below viewport
-          window.scrollBy(0,300);
-          setTimeout(function(){
-            chk=getCheckBtn();
-            if(chk){chk.click();lastAdvance=Date.now();addLog('submit','ok');}
-            setTimeout(function(){setMathsBusy(false);lastMathsQ='';},900);
-          },400);
+        var chk=getCheckBtn(); // only returns enabled buttons now
+        if(chk){
+          chk.click();
+          lastAdvance=Date.now();
+          addLog('submitted ✓','ok');
+          stat('maths: done');
+          stats.ans++;stats.correct++;stats.streak++;updateStats();
+          pendingMathsAnswer=null;
+          currentPageKey='';
+          setTimeout(function(){setMathsBusy(false);lastMathsQ='';},1000);
         }else{
-          chk.click();lastAdvance=Date.now();addLog('submit','ok');
-          setTimeout(function(){setMathsBusy(false);lastMathsQ='';},900);
+          // Submit still greyed — fill didn't register with React
+          addLog('submit greyed — fill retry','warn');
+          stat('maths: retrying fill');
+          setMathsBusy(false);
+          // lastMathsQ intentionally NOT cleared → next loop retries fill, skips Gemini
         }
       },rnd(ssp.cd[0],ssp.cd[1]));
-    },450); // wait for numpad to appear after focus
+    });
   },delay||rnd(500,900));
 }
 
@@ -482,11 +518,14 @@ function mathsLoop(){
   watchdog();
   if(hasDialog()){clickKw(['close','dismiss','cancel','got it','ok']);return;}
 
-  // advance after correct answer
   var nx=getNextMathsBtn();
-  if(nx&&Date.now()-lastAdvance>1400){nx.click();lastAdvance=Date.now();lastMathsQ='';addLog('next','ok');return;}
+  if(nx&&Date.now()-lastAdvance>1400){
+    nx.click();lastAdvance=Date.now();lastMathsQ='';
+    pendingMathsAnswer=null;currentPageKey='';
+    addLog('next','ok');return;
+  }
 
-  // click Answer button to get to input page — capture context first
+  // Capture context and click Answer button
   if(Date.now()-lastAnswerClick>3000){
     var apb=getAnswerProceedBtn();
     if(apb){
@@ -495,18 +534,53 @@ function mathsLoop(){
       apb.click();
       lastAnswerClick=Date.now();
       stat('opening input...');
-      addLog('answer btn clicked','ok');
       return;
     }
   }
 
   var mathsMCQ=getMathsMCQ();
   var inp=getMathsInput();
-  var qText=getMathsQuestion()||storedMathsContext.slice(0,200);
-  if(!qText||qText===lastMathsQ)return;
   if(!mathsMCQ&&!inp)return;
 
+  var qText=getMathsQuestion()||storedMathsContext.slice(0,200)||'unknown';
+
+  // Page fingerprint — MCQ options + input presence
+  var pageKey=(mathsMCQ?mathsMCQ.options.join('|'):'')+'__'+(inp?'inp':'');
+
+  // ── If we already have an answer for this page, skip Gemini and go straight to fill ──
+  if(pageKey===currentPageKey&&pendingMathsAnswer){
+    addLog('retry fill (cached answer)','info');
+    setMathsBusy(true);
+
+    if(mathsMCQ&&pendingMathsAnswer.a){
+      clickMCQAnswer(mathsMCQ.buttons,pendingMathsAnswer.a);
+    }
+    if(inp&&pendingMathsAnswer.b){
+      fillAndSubmit(pendingMathsAnswer.b,rnd(400,700));
+    }else if(!inp&&mathsMCQ){
+      // MCQ-only retry
+      setTimeout(function(){
+        var chk=getCheckBtn();
+        if(chk){chk.click();lastAdvance=Date.now();addLog('submit','ok');
+          stats.ans++;stats.correct++;stats.streak++;updateStats();
+          pendingMathsAnswer=null;currentPageKey='';
+        }
+        setTimeout(function(){setMathsBusy(false);lastMathsQ='';},900);
+      },rnd(sp().cd[0],sp().cd[1]));
+    }
+    return;
+  }
+
+  // New page — need Gemini
+  if(qText===lastMathsQ&&pageKey!==currentPageKey){
+    // question text same but page changed — reset
+    lastMathsQ='';
+  }
+  if(qText===lastMathsQ)return;
+
   lastMathsQ=qText;
+  currentPageKey=pageKey;
+  pendingMathsAnswer=null;
   setMathsBusy(true);
 
   var ticker=setInterval(function(){
@@ -515,13 +589,15 @@ function mathsLoop(){
   },1000);
 
   addLog('Q: '+qText.slice(0,40),'info');
-
-  // Full context to send Gemini — prefer stored (has the numbers from question page)
   var ctx=storedMathsContext||qText;
 
-  // ── Case 1: MCQ select + number input (multi-part) ────────────────────────
+  // ── Case 1: MCQ + number input ────────────────────────────────────────────
   if(mathsMCQ&&inp){
-    var prompt='MATHS QUESTION CONTEXT:\n'+ctx+'\n\nPart a) choose one of these options:\n'+mathsMCQ.options.join('\n')+'\n\nPart b) calculate the £ amount (use 2 decimal places only if there are pence, otherwise integer).\n\nReturn ONLY valid JSON, no other text:\n{"a":"exact option text","b":"number"}';
+    var prompt='MATHS QUESTION CONTEXT:\n'+ctx+
+      '\n\nPart a) choose one:\n'+mathsMCQ.options.join('\n')+
+      '\n\nPart b) calculate the £ amount (integer if whole pounds, 2dp if pence).'+
+      '\n\nReturn ONLY valid JSON, nothing else:\n{"a":"exact option text","b":"number"}';
+
     tryModel(0,prompt,function(err,answer){
       clearInterval(ticker);
       if(err){stat('err');addLog(err,'err');setMathsBusy(false);lastMathsQ='';return;}
@@ -530,41 +606,32 @@ function mathsLoop(){
       var parsed=null;
       try{parsed=JSON.parse(answer.replace(/```json|```/g,'').trim());}catch(e){}
 
-      // click part a
-      if(parsed&&parsed.a){
-        var clicked=clickMCQAnswer(mathsMCQ.buttons,String(parsed.a));
-        addLog('a: '+(clicked?'hit':'miss')+' "'+String(parsed.a).slice(0,20)+'"',clicked?'ok':'warn');
-      }
-
-      // extract part b number — handle string or numeric from Gemini
-      var numVal='';
+      var choiceVal='',numVal='';
+      if(parsed&&parsed.a)choiceVal=String(parsed.a);
       if(parsed&&parsed.b!==undefined&&parsed.b!==null&&String(parsed.b).trim()!==''){
-        var raw=String(parsed.b);
-        var nm=raw.match(/[-\d.]+/);
+        var nm=String(parsed.b).match(/[-\d.]+/);
         numVal=nm?nm[0]:'';
       }
-      addLog('b: "'+numVal+'"',numVal?'ok':'warn');
 
-      stats.ans++;stats.correct++;stats.streak++;updateStats();
-
-      if(numVal){
-        fillAndSubmit(numVal,rnd(600,1000));
-      }else{
-        // Gemini didn't give a number — retry with a number-only prompt
-        addLog('retrying for number...','warn');
-        tryModel(0,'CONTEXT:\n'+ctx+'\n\nBased on the above, what is the £ amount for part b)? Output ONLY the number, nothing else.',function(err2,ans2){
+      // If Gemini didn't give a number, retry with number-only prompt
+      if(!numVal){
+        addLog('no number in response — retrying','warn');
+        tryModel(0,'CONTEXT:\n'+ctx+'\n\nWhat is the £ answer for part b)? Output ONLY the number.',function(err2,ans2){
           var nm2=(ans2||'').match(/[-\d.]+/);
-          var v=nm2?nm2[0]:'';
-          addLog('retry b: "'+v+'"',v?'ok':'warn');
-          if(v){
-            fillAndSubmit(v,rnd(400,700));
-          }else{
-            var chk=getCheckBtn();
-            if(chk){chk.click();lastAdvance=Date.now();}
-            setTimeout(function(){setMathsBusy(false);lastMathsQ='';},900);
-          }
+          numVal=nm2?nm2[0]:'';
+          addLog('retry b: "'+numVal+'"',numVal?'ok':'warn');
+          pendingMathsAnswer={a:choiceVal,b:numVal};
+          if(choiceVal)clickMCQAnswer(mathsMCQ.buttons,choiceVal);
+          if(numVal)fillAndSubmit(numVal,rnd(600,1000));
+          else{setMathsBusy(false);lastMathsQ='';}
         });
+        return;
       }
+
+      pendingMathsAnswer={a:choiceVal,b:numVal};
+      addLog('a: "'+choiceVal+'" b: "'+numVal+'"','ok');
+      if(choiceVal)clickMCQAnswer(mathsMCQ.buttons,choiceVal);
+      fillAndSubmit(numVal,rnd(600,1000));
     });
     return;
   }
@@ -574,19 +641,20 @@ function mathsLoop(){
     tryModel(0,'Maths question:\n'+ctx+'\n\nOptions:\n'+mathsMCQ.options.join('\n')+'\n\nOutput ONLY the exact correct option text, nothing else.',function(err,answer){
       clearInterval(ticker);
       if(err){stat('err');addLog(err,'err');setMathsBusy(false);lastMathsQ='';return;}
+      pendingMathsAnswer={a:answer,b:''};
       var clicked=clickMCQAnswer(mathsMCQ.buttons,answer);
       addLog('mcq: '+(clicked?'hit':'miss')+' '+answer.slice(0,20),clicked?'ok':'warn');
       if(clicked){
-        stats.ans++;stats.correct++;stats.streak++;updateStats();
-        lastAdvance=Date.now();
         setTimeout(function(){
           var chk=getCheckBtn();
-          if(chk){chk.click();addLog('submit','ok');}
+          if(chk){
+            chk.click();lastAdvance=Date.now();addLog('submit','ok');
+            stats.ans++;stats.correct++;stats.streak++;updateStats();
+            pendingMathsAnswer=null;currentPageKey='';
+          }
           setTimeout(function(){setMathsBusy(false);lastMathsQ='';},900);
         },rnd(sp().cd[0],sp().cd[1]));
-      }else{
-        setMathsBusy(false);lastMathsQ='';
-      }
+      }else{setMathsBusy(false);lastMathsQ='';}
     });
     return;
   }
@@ -596,8 +664,8 @@ function mathsLoop(){
     var local=tryLocalSolve(ctx);
     if(local!==null){
       clearInterval(ticker);
-      stat(local);addLog('local: '+local,'ok');
-      stats.ans++;stats.correct++;stats.streak++;updateStats();
+      addLog('local: '+local,'ok');
+      pendingMathsAnswer={a:'',b:local};
       fillAndSubmit(local,rnd(300,600));
       return;
     }
@@ -606,14 +674,14 @@ function mathsLoop(){
       if(err){stat('err');addLog(err,'err');setMathsBusy(false);lastMathsQ='';return;}
       var nm=answer.match(/[-\d.]+/);
       var val=nm?nm[0]:answer.trim();
-      stat(val);addLog('ans: '+val,'ok');
-      stats.ans++;stats.correct++;stats.streak++;updateStats();
+      addLog('ans: '+val,'ok');
+      pendingMathsAnswer={a:'',b:val};
       fillAndSubmit(val,rnd(400,700));
     });
   }
 }
 
-// ── Init + loop ───────────────────────────────────────────────────────────────
+// ── Init ──────────────────────────────────────────────────────────────────────
 sparxMode=detectMode();
 setMode(sparxMode);
 stat('running — '+sparxMode+' mode');
